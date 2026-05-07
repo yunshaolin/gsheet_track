@@ -1,0 +1,119 @@
+
+
+/**
+ * Percento Tracker - 穩定優化版（失敗自動保留舊值）
+ */
+function updatePercentoTracker() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const now = new Date();
+  const timeString = Utilities.formatDate(now, "GMT+8", "yyyy-MM-dd HH:mm:ss");
+
+  // --- 1. [總覽] 更新 ---
+  const overviewSheet = ss.getSheetByName("總覽");
+  if (overviewSheet) {
+    overviewSheet.getRange("A2").setValue("計價幣別：新台幣（TWD）　　資產更新時間：" + timeString);
+  }
+
+  // --- 2. [設定] 更新 (匯率專區) ---
+  const settingSheet = ss.getSheetByName("設定");
+  if (settingSheet) {
+    const lastRow = settingSheet.getLastRow();
+    if (lastRow >= 4) {
+      const numRows = lastRow - 3;
+      const codes = settingSheet.getRange(4, 2, numRows, 1).getValues();
+      const currentRates = settingSheet.getRange(4, 3, numRows, 1).getValues(); // 備份舊匯率
+      const formulas = [];
+      
+      for (let i = 0; i < codes.length; i++) {
+        const code = codes[i][0].toString().trim().toUpperCase();
+        if (code === "TWD") formulas.push([1]);
+        else if (code.length === 3) formulas.push([`=GOOGLEFINANCE("CURRENCY:${code}TWD")`]);
+        else formulas.push([""]);
+      }
+      
+      const workerRange = settingSheet.getRange(4, 26, formulas.length, 1);
+      workerRange.setFormulas(formulas);
+      SpreadsheetApp.flush();
+      Utilities.sleep(3000); 
+
+      const newResults = workerRange.getValues();
+      const finalRates = [];
+      const finalTimes = [];
+
+      for (let i = 0; i < newResults.length; i++) {
+        const val = newResults[i][0];
+        if (typeof val === 'number' && !isNaN(val) && val !== 0) {
+          finalRates.push([val]);
+          finalTimes.push([timeString]);
+        } else {
+          finalRates.push([currentRates[i][0]]); // 失敗則保留舊值
+          finalTimes.push(["上次更新: " + timeString.split(" ")[0]]); 
+        }
+      }
+      
+      settingSheet.getRange(4, 3, finalRates.length, 1).setValues(finalRates);
+      settingSheet.getRange(4, 4, finalTimes.length, 1).setValues(finalTimes);
+      workerRange.clearContent();
+    }
+  }
+
+  // --- 3. [投資] 更新 (保留舊值邏輯) ---
+  const investSheet = ss.getSheetByName("投資");
+  if (investSheet) {
+    const lastRow = investSheet.getLastRow();
+    if (lastRow >= 2) {
+      const numRows = lastRow - 1;
+      const tickers = investSheet.getRange(2, 3, numRows, 1).getValues();
+      const currentPrices = investSheet.getRange(2, 6, numRows, 1).getValues(); // 備份現價
+      const currentTimeStamps = investSheet.getRange(2, 12, numRows, 1).getValues(); // 備份時間
+      
+      const formulas = [];
+      for (let i = 0; i < tickers.length; i++) {
+        let ticker = tickers[i][0].toString().trim();
+        if (ticker) {
+          const formatted = (/^\d+$/.test(ticker)) ? `TPE:${ticker}` : ticker;
+          formulas.push([`=GOOGLEFINANCE("${formatted}", "price")`]);
+        } else {
+          formulas.push([""]);
+        }
+      }
+      
+      const workerRange = investSheet.getRange(2, 26, numRows, 1);
+      workerRange.setFormulas(formulas);
+      SpreadsheetApp.flush();
+      Utilities.sleep(4000); // 稍微加長等待時間確保穩定
+      
+      const newResults = workerRange.getValues();
+      const finalPrices = [];
+      const finalTimeStamps = [];
+
+      for (let i = 0; i < newResults.length; i++) {
+        const newVal = newResults[i][0];
+        if (typeof newVal === 'number' && !isNaN(newVal)) {
+          finalPrices.push([newVal]);
+          finalTimeStamps.push([timeString]);
+        } else {
+          finalPrices.push([currentPrices[i][0]]); // 失敗保留原數值
+          finalTimeStamps.push([currentTimeStamps[i][0]]); // 失敗保留原時間
+        }
+      }
+      
+      investSheet.getRange(2, 6, finalPrices.length, 1).setValues(finalPrices);
+      investSheet.getRange(2, 12, finalTimeStamps.length, 1).setValues(finalTimeStamps);
+      workerRange.clearContent();
+    }
+  }
+
+  // --- 4. [現金帳戶] 更新 ---
+  const cashSheet = ss.getSheetByName("現金帳戶");
+  if (cashSheet) {
+    const lastRow = cashSheet.getLastRow();
+    if (lastRow >= 3) {
+      const names = cashSheet.getRange(3, 1, lastRow - 2, 1).getValues();
+      const timeStamps = names.map(row => row[0] !== "" ? [timeString] : [""]);
+      cashSheet.getRange(3, 7, timeStamps.length, 1).setValues(timeStamps);
+    }
+  }
+
+  SpreadsheetApp.getUi().alert("✅ 同步完成！");
+}
